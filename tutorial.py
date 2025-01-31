@@ -124,22 +124,10 @@ matplotlib.pyplot.show()
 # 3. Scientific Computing with scipy
 # ================================
 
-# Optimization Example
-# -------------------
-# Define a mathematical function to minimize
-def objective_function(x):
-    """This function calculates x^2 + 10*sin(x)"""
-    return x**2 + 10*numpy.sin(x)
-
-# Find the minimum value of our function
-optimization_result = scipy.optimize.minimize(objective_function, x0=0)
-print("\nOptimization Results:")
-print("Minimum found at x =", optimization_result.x[0])
-print("Minimum value =", optimization_result.fun)
 
 # Signal Processing Example
 # ------------------------
-# Create a time array from 0 to 1 second
+# Create a time array from 0 to 1 second (1000 points)
 time = numpy.linspace(0, 1, 1000)
 # Create a signal with two frequency components
 signal_data = numpy.sin(2*numpy.pi*10*time) + numpy.sin(2*numpy.pi*20*time)
@@ -180,10 +168,44 @@ matplotlib.pyplot.show()
 # Advanced Example: Signal Processing and Visualization
 # =================================================
 
-# Generate a clean signal and add noise to it
+# Understanding subplot layout:
+# matplotlib.pyplot.subplots(rows, columns, figsize=(width, height))
+# - rows: number of plots vertically (2 in our case)
+# - columns: number of plots horizontally (1 in our case)
+# - figsize: (width in inches, height in inches)
+#
+# Example layout of subplots(2, 1):
+# +----------------+  ← figure
+# |   top_plot     |  ← subplot(0)
+# |                |
+# +----------------+
+# | bottom_plot    |  ← subplot(1)
+# |                |
+# +----------------+
+
+# First, create our time values from 0 to 1 second
 time = numpy.linspace(0, 1, 1000)
-clean_signal = numpy.sin(2*numpy.pi*10*time)  # Pure sine wave
-noise = numpy.random.normal(0, 0.5, len(time))  # Random noise
+
+# Understanding sine wave parameters:
+# numpy.sin(2 * numpy.pi * frequency * time)
+# - 2*numpy.pi: converts from cycles to radians (2π radians = 360 degrees = 1 cycle)
+# - frequency: number of complete cycles per second (10 Hz in our case)
+# - time: our time array from 0 to 1 second
+#
+# Example visualization of parameters:
+# Amplitude = 1
+# Frequency = 10 Hz
+# Total cycles in 1 second = 10
+#  1┤     /\    /\    /\    /\    /\    /\    /\    /\    /\    /\
+#   │    /  \  /  \  /  \  /  \  /  \  /  \  /  \  /  \  /  \  /  \
+#  0┼───/────\/────\/────\/────\/────\/────\/────\/────\/────\/────\
+#   │  /      \    \    \    \    \    \    \    \    \    \    \
+# -1┤ /        \    \    \    \    \    \    \    \    \    \    \
+#   └─────────────────────────────────────────────────────────────────→
+#   0                          Time (seconds)                         1
+
+clean_signal = numpy.sin(2*numpy.pi*10*time)  # Creates a 10 Hz sine wave
+noise = numpy.random.normal(0, 0.5, len(time))  # Random noise with standard deviation 0.5
 noisy_signal = clean_signal + noise  # Add noise to the signal
 
 # Design and apply a lowpass filter to remove noise
@@ -200,22 +222,56 @@ print("Clean Signal Average:", numpy.mean(clean_signal))
 print("Noisy Signal Average:", numpy.mean(noisy_signal))
 print("Filtered Signal Average:", numpy.mean(filtered_signal))
 
-# Create plots to compare signals
-figure, (top_plot, bottom_plot) = matplotlib.pyplot.subplots(2, 1, figsize=(10, 8))
+# Create a figure with two subplots stacked vertically
+# The subplots() function returns two things:
+# 1. figure: the overall figure object that contains all subplots
+# 2. (top_plot, bottom_plot): tuple of individual subplot objects
+#    - top_plot: the upper subplot (index 0)
+#    - bottom_plot: the lower subplot (index 1)
+figure, (top_plot, bottom_plot) = matplotlib.pyplot.subplots(
+    nrows=2,          # 2 rows (stacked vertically)
+    ncols=1,          # 1 column
+    figsize=(10, 8)   # Width = 10 inches, Height = 8 inches
+)
 
-# Top plot: Original and noisy signals
-top_plot.plot(time, noisy_signal, 'blue', label='Noisy Signal')
-top_plot.plot(time, clean_signal, 'green', label='Clean Signal')
+# Top plot: Compare original clean signal with noisy signal
+# Plot each line separately so we can give them different colors and labels
+top_plot.plot(
+    time,           # X-axis values (time points)
+    noisy_signal,   # Y-axis values (signal amplitude)
+    'blue',         # Line color
+    label='Noisy Signal'  # Label for legend
+)
+top_plot.plot(
+    time,
+    clean_signal,
+    'green',
+    label='Clean Signal'
+)
 top_plot.set_title('Original Signals Comparison')
-top_plot.legend()
-top_plot.grid(True)
+top_plot.legend()    # Show the color-coded legend
+top_plot.grid(True)  # Add grid lines for better readability
 
-# Bottom plot: Filtered and clean signals
-bottom_plot.plot(time, filtered_signal, 'red', label='Filtered Signal')
-bottom_plot.plot(time, clean_signal, 'green', label='Clean Signal')
+# Bottom plot: Compare filtered signal with original clean signal
+# This shows how well our filtering worked
+bottom_plot.plot(
+    time,
+    filtered_signal,
+    'red',
+    label='Filtered Signal'
+)
+bottom_plot.plot(
+    time,
+    clean_signal,
+    'green',
+    label='Clean Signal'
+)
 bottom_plot.set_title('Filtered vs Clean Signal')
 bottom_plot.legend()
 bottom_plot.grid(True)
 
+# Adjust spacing between subplots to prevent overlap
 matplotlib.pyplot.tight_layout()
+
+# Display the complete figure with both subplots
 matplotlib.pyplot.show()
