@@ -1,35 +1,75 @@
-import numpy as np
-import pyaudio
-import wave
-import time
-from scipy.io import wavfile
+"""
+Noise reduction implementation with detailed educational comments.
+This version uses sounddevice for reliable audio recording and playback.
+"""
+
 import sounddevice as sd
+import numpy as np
+import scipy.io.wavfile as wav
+import time
 
 class NoiseReduction:
-    def __init__(self, sample_rate: int = 44100):
+    def __init__(self, sample_rate=44100):
+        """
+        Initialize noise reduction parameters.
+        
+        The audio signal will be processed in overlapping frames:
+        - frame_size: Number of samples in each frame
+        - hop_size: Number of samples to advance between frames
+        - sample_rate: Number of audio samples per second
+        """
         self.sample_rate = sample_rate
         self.frame_size = 2048
         self.hop_size = self.frame_size // 2
+        
+        print("\nNoise Reduction initialized:")
+        print(f"Sample Rate: {sample_rate} Hz")
+        print(f"Frame Size: {self.frame_size} samples")
+        print(f"Hop Size: {self.hop_size} samples")
 
-    def hanning_window(self, size: int) -> np.ndarray:
-        return np.hanning(size)
-    
-    """
-    Purpose: The method splits a continuous audio signal into overlapping frames for analysis
-    Signal:     [0....1024....2048....3072....4096]
-    Frame 1:    [0........2048]
-    Frame 2:        [1024........3072]
-    Frame 3:            [2048........4096]
-    """
-    def frame_signal(self, signal: np.ndarray) -> np.ndarray:
-        num_frames = 1 + (len(signal) - self.frame_size) // self.hop_size
-        frames = np.zeros((num_frames, self.frame_size))
-        window = self.hanning_window(self.frame_size) 
+    def record_audio(self, duration, is_noise=False):
         """
-        Applies Hanning window to overlapping frames of the signal.
-    
+        Record audio using sounddevice.
+        
+        Parameters:
+        - duration: Recording length in seconds
+        - is_noise: Whether this is a noise profile recording
+        
+        This function records audio data as an array of float32 values
+        in the range [-1.0, 1.0]. Each sample represents the amplitude
+        of the audio signal at that point in time.
+        """
+        purpose = "noise profile" if is_noise else "main audio"
+        print(f"\nRecording {purpose} for {duration} seconds...")
+        input("Press Enter to start recording...")
+        print("Recording...")
+        
+        recording = sd.rec(
+            frames=int(duration * self.sample_rate),
+            samplerate=self.sample_rate,
+            channels=1,
+            dtype=np.float32
+        )
+        
+        sd.wait()
+        print("Recording finished!")
+        
+        if recording.ndim > 1:
+            recording = recording.flatten()
+            
+        return recording
+
+    def process_frames(self, signal):
+        """
+        Split signal into overlapping frames with Hanning window.
+        
+        The signal is divided into overlapping frames like this:
+        Signal:     [0....1024....2048....3072....4096]
+        Frame 1:    [0........2048]
+        Frame 2:        [1024........3072]
+        Frame 3:            [2048........4096]
+        
         #########################################################
-        #                                                       #
         #              Hanning Window Explanation               #
         #                                                       #
         #  1. What is Hanning Window?                          #
@@ -57,218 +97,174 @@ class NoiseReduction:
         #     Frame2:     /\                                  #
         #     Frame3:       /\                                #
         #     Result:  /\/\/\    (50% overlap)               #
-        #                                                       #
         #########################################################
         """
-
+        num_frames = 1 + (len(signal) - self.frame_size) // self.hop_size
+        frames = np.zeros((num_frames, self.frame_size))
+        window = np.hanning(self.frame_size)
+        
         for i in range(num_frames):
             start = i * self.hop_size
             end = start + self.frame_size
             frames[i] = signal[start:end] * window
-
+            
         return frames
 
-    def estimate_noise_profile(self, noise_signal: np.ndarray) -> np.ndarray:
+    def get_noise_profile(self, noise_signal):
+        """
+        Estimate noise frequency profile.
+        
+        Background noise tends to be statistically constant.
+        By averaging multiple frames in the frequency domain,
+        we get a stable estimate of the noise spectrum.
+        Working in frequency domain lets us target specific frequencies.
+        """
         if len(noise_signal) < self.frame_size:
             raise ValueError("Noise signal must be at least as long as frame_size")
-
-        frames = self.frame_signal(noise_signal)
-        spectra = np.fft.rfft(frames, axis=1) # calculate each frame to frequency domain
-        magnitude_spectrum = np.mean(np.abs(spectra), axis=0) # calculate the average magnitude across frames
-        """
-        Background noise tends to be statistically constant
-        Averaging multiple frames gives us a stable estimate
-        Working in frequency domain lets us target specific frequencies
-        """ 
+            
+        frames = self.process_frames(noise_signal)
+        spectra = np.fft.rfft(frames, axis=1)  # Convert to frequency domain
+        magnitude_spectrum = np.mean(np.abs(spectra), axis=0)  # Average across frames
         return magnitude_spectrum
 
-    def reduce_noise(self, signal: np.ndarray, noise_profile: np.ndarray, 
-                    reduction_factor: float = 2.0) -> np.ndarray:
-        frames = self.frame_signal(signal)
+    def reduce_noise(self, signal, noise_profile, reduction_strength=2.0):
+        """
+        Apply noise reduction using spectral subtraction.
+        
+        The process works by:
+        1. Splitting signal into overlapping frames
+        2. Converting each frame to frequency domain
+        3. Subtracting scaled noise profile
+        4. Applying temporal smoothing to avoid musical noise
+        5. Converting back to time domain
+        6. Reconstructing signal with proper normalization
+        """
+        frames = self.process_frames(signal)
         num_frames = len(frames)
         output = np.zeros(len(signal))
+        window = np.hanning(self.frame_size)
         
         prev_magnitude = None
         for i in range(num_frames):
+            if i % 10 == 0:
+                print(f"Progress: {i/num_frames*100:.1f}%")
+                
+            # Convert to frequency domain
             spectrum = np.fft.rfft(frames[i])
             magnitude = np.abs(spectrum)
             phase = np.angle(spectrum)
             
-            magnitude_clean = magnitude - (noise_profile * reduction_factor) # subtract the noise profile 
-            magnitude_clean = np.maximum(magnitude_clean, 0) # avoid negative value
-           
+            # Subtract noise profile
+            magnitude_clean = magnitude - (noise_profile * reduction_strength)
+            magnitude_clean = np.maximum(magnitude_clean, 0)
+            
             """
-            # Example with one frequency component:
+            Apply temporal smoothing to reduce musical noise:
+            
+            Example with one frequency component:
             Frame1: 0.5    # Current frequency magnitude
             Frame2: 0.8    # Current frequency magnitude
-            Without smoothing:  [0.5, 0.8]           # Abrupt change
-            # This creates rapid on/off switching of frequencies that sounds like:
-            # *beep* *silence* *beep* *silence*
-            # This artificial sound is called "musical n
             
+            Without smoothing:  [0.5, 0.8]           # Abrupt change
             With smoothing:     [0.5, 0.74]          # Smoother change
-                                # 0.74 = 0.8*0.8 + 0.2*0.5
+                               # 0.74 = 0.8*0.8 + 0.2*0.5
+                               
+            This prevents rapid on/off switching of frequencies that would
+            sound like: *beep* *silence* *beep* *silence*
             """
             if prev_magnitude is not None:
-                magnitude_clean = 0.8 * magnitude_clean + 0.2 * prev_magnitude # mix the current frame with prev frame
+                magnitude_clean = 0.8 * magnitude_clean + 0.2 * prev_magnitude
             prev_magnitude = magnitude_clean.copy()
             
-            spectrum_clean = magnitude_clean * np.exp(1j * phase) # recombine the magnitude with phase
-            frame_clean = np.real(np.fft.irfft(spectrum_clean))  # bask to time domain with inverse FFT
+            # Convert back to time domain
+            spectrum_clean = magnitude_clean * np.exp(1j * phase)
+            frame_clean = np.real(np.fft.irfft(spectrum_clean))
             
-            # add to output with overlap
+            # Add to output with overlap
             start = i * self.hop_size
             end = start + self.frame_size
-            output[start:end] += frame_clean * self.hanning_window(self.frame_size)
-
-        norm_buffer = np.zeros_like(output)
-        window = self.hanning_window(self.frame_size)
+            output[start:end] += frame_clean * window
         
+        # Normalize for overlap-add
+        """
+        Each frame is multiplied by window twice:
+        - Once during framing
+        - Once during reconstruction
+        
+        Without normalization:
+        signal = original * window * window  # Too much attenuation
+        
+        With normalization:
+        signal = (original * window * window) / window_sum  # Proper amplitude
+        """
+        norm_buffer = np.zeros_like(output)
         for i in range(num_frames):
             start = i * self.hop_size
             end = start + self.frame_size
             norm_buffer[start:end] += window
-        
-        # avoid divide by zero    
-        norm_buffer = np.maximum(norm_buffer, 1e-10)
-        """
-        # Each frame is multiplied by window twice:
-        # - Once during framing
-        # - Once during reconstruction
-        # Without normalization:
-        signal = original * window * window  # Too much attenuation
-        # With normalization:
-        signal = (original * window * window) / window_sum  # Proper amplitude
-        """
+            
+        norm_buffer = np.maximum(norm_buffer, 1e-10)  # Avoid divide by zero
         output /= norm_buffer
-
+        
+        print("Noise reduction complete!")
         return output
 
-def record_audio(filename, duration, sample_rate=44100, delay=3):
-    chunk = 1024
-    format = pyaudio.paFloat32
-    channels = 1
+    def save_audio(self, audio_data, filename):
+        """Save audio to WAV file using 16-bit PCM format."""
+        audio_int16 = np.clip(audio_data * 32768, -32768, 32767).astype(np.int16)
+        wav.write(filename, self.sample_rate, audio_int16)
+        print(f"\nSaved to {filename}")
 
-    p = pyaudio.PyAudio()
+    def play_audio(self, audio_data, description=""):
+        """Play audio using sounddevice."""
+        if description:
+            print(f"\nPlaying {description}...")
+        input("Press Enter to start playback...")
+        print("Playing...")
+        sd.play(audio_data, self.sample_rate)
+        sd.wait()
+        print("Playback finished!")
 
-    print(f"Recording will start in {delay} seconds...")
-    time.sleep(delay)
-        # Get user confirmation before starting
-    if not get_user_confirmation(1):
-        print("Recording cancelled.")
-        exit()
-
-
-    print("Recording...")
-
-    stream = p.open(format=format,
-                   channels=channels,
-                   rate=sample_rate,
-                   input=True,
-                   frames_per_buffer=chunk)
-
-    frames = []
-    """
-    # sample_rate is 44100 Hz (samples per second)
-    # chunk is 1024 samples (buffer size)
-    # duration is the recording length in seconds
-    # So if duration is 5 seconds, it would be: (44100 / 1024 * 5) ≈ 215 iterations
-    # chunk is 1024 samples
-    # stream.read() returns raw bytes from the microphone
-    # Each sample is 4 bytes (32 bits) because we're using paFloat32 format
-    # So each data chunk is 4096 bytes (1024 samples × 4 bytes)
-
-    """
-
-    for i in range(0, int(sample_rate / chunk * duration)):
-        data = stream.read(chunk)
-        frames.append(np.frombuffer(data, dtype=np.float32)) # # Converts 4096 bytes into 1024 float32 numbers (float32 is 32 bits and i byte equal to 8 bits so 32 bits equal to 4 bytes)
-
-
-    print("Finished recording")
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
+def main():
+    # Initialize
+    nr = NoiseReduction(sample_rate=44100)
     
-    """
-    The frames.append() has made a 2-d array. We need to convert it inot a 1D array 
-    # frames is a list of chunks, each chunk is a numpy array
-    frames = [
-    array([0.1, 0.2, ..., 0.5]),     # chunk 1 (1024 samples)
-    array([0.3, 0.4, ..., 0.2]),     # chunk 2 (1024 samples)
-    array([0.6, 0.7, ..., 0.1])      # chunk 3 (1024 samples)
-    ]
-
-    # After concatenation
-    audio_data = np.concatenate(frames)
-    # Result: array([0.1, 0.2, ..., 0.5, 0.3, 0.4, ..., 0.2, 0.6, 0.7, ..., 0.1])
-    # Now it's one continuous array of all samples
-    """
-    # Convert frames to numpy array
-    audio_data = np.concatenate(frames)
-    
-    # Save as WAV file
-    audio_data_int16 = np.clip(audio_data * 32768.0, -32768, 32767).astype(np.int16)
-    wavfile.write(filename, sample_rate, audio_data_int16)
-    
-    return audio_data, sample_rate
-
-def play_audio(audio_data, sample_rate):
-            # Get user confirmation before starting
-    if not get_user_confirmation(0):
-        print("Recording cancelled.")
-        exit()
-
-
-    print("Playing audio...")
-    sd.play(audio_data, sample_rate)
-    sd.wait()  # Wait until the audio is finished playing
-
-def get_user_confirmation(play_or_record):
-    """
-    Prompts the user to confirm before proceeding.
-    Returns True if user wants to continue, False otherwise.
-    """
-    while True:
-        if(play_or_record>0):
-            response = input("\nPress 'Enter' to start recording or 'q' to quit: ").lower()
-        else:
-            response = input("\nPress 'Enter' to start playing or 'q' to quit: ").lower()
-        if response == '':
-            return True
-        elif response == 'q':
-            return False
+    try:
+        # Record noise profile (2 seconds)
+        print("\nStep 1: Record background noise")
+        print("Please be quiet during this recording!")
+        noise = nr.record_audio(duration=2.0, is_noise=True)
+        nr.save_audio(noise, "noise.wav")
+        
+        # Record main audio (5 seconds)
+        print("\nStep 2: Record main audio")
+        print("Speak normally during this recording")
+        audio = nr.record_audio(duration=5.0)
+        nr.save_audio(audio, "original.wav")
+        
+        # Process
+        print("\nStep 3: Process audio")
+        noise_profile = nr.get_noise_profile(noise)
+        cleaned = nr.reduce_noise(audio, noise_profile)
+        nr.save_audio(cleaned, "cleaned.wav")
+        
+        # Playback
+        print("\nStep 4: Compare results")
+        nr.play_audio(audio, "original audio")
+        time.sleep(0.5)
+        nr.play_audio(cleaned, "cleaned audio")
+        
+        print("\nFiles saved:")
+        print("- noise.wav (noise profile)")
+        print("- original.wav (original recording)")
+        print("- cleaned.wav (noise reduced)")
+        
+    except Exception as e:
+        print(f"\nError: {str(e)}")
+        print("\nTroubleshooting:")
+        print("1. Check if your microphone is connected")
+        print("2. Check if it's set as the default recording device")
+        print("3. Try adjusting your system's audio settings")
 
 if __name__ == "__main__":
-    # Parameters
-    SAMPLE_RATE = 44100
-    RECORD_DURATION = 6  # seconds
-    DELAY = 3  # seconds
-    
-    # Initialize noise reduction
-    nr = NoiseReduction(sample_rate=SAMPLE_RATE)
-   
-    # Record audio
-    print("We'll record background noise first (1 second)")
-    noise_data, _ = record_audio("noise.wav", duration=1, delay=1)
-    
-    print("\nNow we'll record your main audio")
-    audio_data, _ = record_audio("original.wav", duration=RECORD_DURATION, delay=DELAY)
-    
-    # Process audio
-    print("Processing audio...")
-    noise_profile = nr.estimate_noise_profile(noise_data)
-    clean_audio = nr.reduce_noise(audio_data, noise_profile, reduction_factor=2.0)
-    
-    # Save cleaned audio
-    clean_audio_int16 = np.clip(clean_audio * 32768.0, -32768, 32767).astype(np.int16)
-    wavfile.write("clean.wav", SAMPLE_RATE, clean_audio_int16)
-    
-    # Playback
-    print("\nPlaying original audio...")
-    play_audio(audio_data, SAMPLE_RATE)
-    
-    time.sleep(1)  # Wait a second between playbacks
-    
-    print("\nPlaying cleaned audio...")
-    play_audio(clean_audio, SAMPLE_RATE)
+    main()
