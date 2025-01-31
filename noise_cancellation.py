@@ -13,11 +13,53 @@ class NoiseReduction:
 
     def hanning_window(self, size: int) -> np.ndarray:
         return np.hanning(size)
-
+    
+    """
+    Purpose: The method splits a continuous audio signal into overlapping frames for analysis
+    Signal:     [0....1024....2048....3072....4096]
+    Frame 1:    [0........2048]
+    Frame 2:        [1024........3072]
+    Frame 3:            [2048........4096]
+    """
     def frame_signal(self, signal: np.ndarray) -> np.ndarray:
         num_frames = 1 + (len(signal) - self.frame_size) // self.hop_size
         frames = np.zeros((num_frames, self.frame_size))
-        window = self.hanning_window(self.frame_size)
+        window = self.hanning_window(self.frame_size) 
+        """
+        Applies Hanning window to overlapping frames of the signal.
+    
+        #########################################################
+        #                                                       #
+        #              Hanning Window Explanation               #
+        #                                                       #
+        #  1. What is Hanning Window?                          #
+        #     Shape:    1.0 |    ∩                            #
+        #               0.8 |   /  \                          #
+        #               0.6 |  /    \                         #
+        #               0.4 | /      \                        #
+        #               0.2 |/        \                       #
+        #               0.0 |__________\                      #
+        #                    0   N/2   N                      #
+        #                                                       #
+        #  2. Why Use It?                                      #
+        #     Without Window:                                  #
+        #     Frame1: [...1 1 1]|                             #
+        #     Frame2:           |[1 1 1...]                   #
+        #              ^ Sharp edge creates artifacts          #
+        #                                                       #
+        #     With Window:                                     #
+        #     Frame1: [...1 0.5 0]|                           #
+        #     Frame2:             |[0 0.5 1...]               #
+        #              ^ Smooth transition                     #
+        #                                                       #
+        #  3. Overlapping Process:                            #
+        #     Frame1:   /\                                    #
+        #     Frame2:     /\                                  #
+        #     Frame3:       /\                                #
+        #     Result:  /\/\/\    (50% overlap)               #
+        #                                                       #
+        #########################################################
+        """
 
         for i in range(num_frames):
             start = i * self.hop_size
@@ -31,9 +73,13 @@ class NoiseReduction:
             raise ValueError("Noise signal must be at least as long as frame_size")
 
         frames = self.frame_signal(noise_signal)
-        spectra = np.fft.rfft(frames, axis=1)
-        magnitude_spectrum = np.mean(np.abs(spectra), axis=0)
-        
+        spectra = np.fft.rfft(frames, axis=1) # calculate each frame to frequency domain
+        magnitude_spectrum = np.mean(np.abs(spectra), axis=0) # calculate the average magnitude across frames
+        """
+        Background noise tends to be statistically constant
+        Averaging multiple frames gives us a stable estimate
+        Working in frequency domain lets us target specific frequencies
+        """ 
         return magnitude_spectrum
 
     def reduce_noise(self, signal: np.ndarray, noise_profile: np.ndarray, 
@@ -48,16 +94,17 @@ class NoiseReduction:
             magnitude = np.abs(spectrum)
             phase = np.angle(spectrum)
             
-            magnitude_clean = magnitude - (noise_profile * reduction_factor)
-            magnitude_clean = np.maximum(magnitude_clean, 0)
+            magnitude_clean = magnitude - (noise_profile * reduction_factor) # subtract the noise profile 
+            magnitude_clean = np.maximum(magnitude_clean, 0) # avoid negative value
             
             if prev_magnitude is not None:
-                magnitude_clean = 0.8 * magnitude_clean + 0.2 * prev_magnitude
+                magnitude_clean = 0.8 * magnitude_clean + 0.2 * prev_magnitude # mix the current frame with prev frame
             prev_magnitude = magnitude_clean.copy()
             
-            spectrum_clean = magnitude_clean * np.exp(1j * phase)
-            frame_clean = np.real(np.fft.irfft(spectrum_clean))
+            spectrum_clean = magnitude_clean * np.exp(1j * phase) # recombine the magnitude with phase
+            frame_clean = np.real(np.fft.irfft(spectrum_clean))  # bask to time domain with inverse FFT
             
+            # add to output with overlap
             start = i * self.hop_size
             end = start + self.frame_size
             output[start:end] += frame_clean * self.hanning_window(self.frame_size)
