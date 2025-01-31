@@ -96,7 +96,19 @@ class NoiseReduction:
             
             magnitude_clean = magnitude - (noise_profile * reduction_factor) # subtract the noise profile 
             magnitude_clean = np.maximum(magnitude_clean, 0) # avoid negative value
+           
+            """
+            # Example with one frequency component:
+            Frame1: 0.5    # Current frequency magnitude
+            Frame2: 0.8    # Current frequency magnitude
+            Without smoothing:  [0.5, 0.8]           # Abrupt change
+            # This creates rapid on/off switching of frequencies that sounds like:
+            # *beep* *silence* *beep* *silence*
+            # This artificial sound is called "musical n
             
+            With smoothing:     [0.5, 0.74]          # Smoother change
+                                # 0.74 = 0.8*0.8 + 0.2*0.5
+            """
             if prev_magnitude is not None:
                 magnitude_clean = 0.8 * magnitude_clean + 0.2 * prev_magnitude # mix the current frame with prev frame
             prev_magnitude = magnitude_clean.copy()
@@ -116,8 +128,18 @@ class NoiseReduction:
             start = i * self.hop_size
             end = start + self.frame_size
             norm_buffer[start:end] += window
-            
+        
+        # avoid divide by zero    
         norm_buffer = np.maximum(norm_buffer, 1e-10)
+        """
+        # Each frame is multiplied by window twice:
+        # - Once during framing
+        # - Once during reconstruction
+        # Without normalization:
+        signal = original * window * window  # Too much attenuation
+        # With normalization:
+        signal = (original * window * window) / window_sum  # Proper amplitude
+        """
         output /= norm_buffer
 
         return output
