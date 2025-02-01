@@ -42,6 +42,9 @@ class TomCatEffect:
             
             # Apply pitch shifting and formant enhancement
             for i in range(len(spectrum)):
+                # in FFT bin is like the index number of the frequency range
+                # Bin 0 = 0 hz 
+                # Bin 1 ~ 21.5hz
                 new_bin = int(i * self.PITCH_SHIFT_FACTOR)
                 if new_bin < len(spectrum):
                     shifted_spectrum[new_bin] = magnitudes[i] * np.exp(1j * phases[i])
@@ -54,11 +57,7 @@ class TomCatEffect:
         
         
        
-        # Normalize
-        max_val = np.max(np.abs(output_buffer))
-        if max_val > 0:
-            output_buffer = output_buffer * 0.95 / max_val
-        
+             
         return output_buffer
 
     def record_audio(self):
